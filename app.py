@@ -6,7 +6,7 @@ from datetime import datetime
 
 app = Flask(__name__)
 
-# Game state
+# Game state dengan status animasi
 game_state = {
     "points": 10000,
     "score": 0,
@@ -21,7 +21,7 @@ game_state = {
     "tutorial_completed": False
 }
 
-# Plant data with animal attractions
+# Plant data dengan animasi khusus
 PLANT_DATA = {
     "oak": {
         "cost": 200,
@@ -31,6 +31,9 @@ PLANT_DATA = {
             "young": ["bird"],
             "mature": ["bird", "squirrel"],
             "fully_grown": ["bird", "squirrel", "owl"]
+        },
+        "animations": {
+            "fully_grown": ["sway", "glow", "sparkle"]
         }
     },
     "rose": {
@@ -41,6 +44,9 @@ PLANT_DATA = {
             "young": [],
             "mature": ["bee", "butterfly"],
             "fully_grown": ["bee", "butterfly", "ladybug"]
+        },
+        "animations": {
+            "fully_grown": ["bloom", "sparkle", "glow"]
         }
     },
     "sunflower": {
@@ -51,6 +57,9 @@ PLANT_DATA = {
             "young": [],
             "mature": ["bee"],
             "fully_grown": ["bee", "bird"]
+        },
+        "animations": {
+            "fully_grown": ["rotate", "glow", "follow_sun"]
         }
     },
     "berry": {
@@ -61,6 +70,9 @@ PLANT_DATA = {
             "young": [],
             "mature": ["bird"],
             "fully_grown": ["bird", "deer", "rabbit"]
+        },
+        "animations": {
+            "fully_grown": ["shake", "glow", "sparkle"]
         }
     }
 }
@@ -71,6 +83,11 @@ def home():
 
 @app.route('/api/game_state', methods=['GET'])
 def get_game_state():
+    # Tambah animasi status untuk tanaman fully grown
+    for plant in game_state["plants"]:
+        if plant["stage"] == "fully_grown":
+            plant["is_animated"] = True
+            plant["animation_type"] = PLANT_DATA[plant["type"]]["animations"]["fully_grown"][0]
     return jsonify(game_state)
 
 @app.route('/api/tutorial_status', methods=['GET'])
@@ -91,7 +108,8 @@ def get_stats():
         "biodiversity": game_state["biodiversity"],
         "score": game_state["score"],
         "food_chains": len(game_state["food_chains"]),
-        "fully_grown": fully_grown
+        "fully_grown": fully_grown,
+        "animated_plants": len([p for p in game_state["plants"] if p.get("stage") == "fully_grown"])
     })
 
 @app.route('/api/plant', methods=['POST'])
@@ -102,7 +120,6 @@ def add_plant():
         x = data.get('x')
         y = data.get('y')
         
-        # Validation
         if plant_type not in PLANT_DATA:
             return jsonify({"status": "error", "message": "Invalid plant type"})
         
@@ -125,23 +142,14 @@ def add_plant():
             "growth": 0,
             "stage": "seed",
             "health": 100,
-            "planted_at": datetime.now().isoformat()
+            "planted_at": datetime.now().isoformat(),
+            "is_animated": False,
+            "animation_type": "none"
         }
         
         game_state["plants"].append(new_plant)
         game_state["points"] -= cost
         game_state["total_plants"] = len(game_state["plants"])
-        
-        # Get attracted animals for this new plant
-        attracted_animals = PLANT_DATA[plant_type]["attractions"]["seed"]
-        new_animals = []
-        
-        for animal in attracted_animals:
-            if animal not in game_state["animals"]:
-                game_state["animals"].append(animal)
-                new_animals.append(animal)
-        
-        game_state["total_animals"] = len(game_state["animals"])
         
         # Update ecosystem
         update_ecosystem()
@@ -152,14 +160,10 @@ def add_plant():
         if len(game_state["activities"]) > 10:
             game_state["activities"] = game_state["activities"][:10]
         
-        # Check achievements
-        check_achievements()
-        
         return jsonify({
             "status": "success",
             "message": f"Planted {plant_type}!",
             "game_state": game_state,
-            "new_animals": new_animals,
             "plant_position": {"x": x, "y": y}
         })
         
@@ -170,7 +174,6 @@ def add_plant():
 def grow_plants():
     try:
         old_animals = set(game_state["animals"])
-        new_animals_list = []
         
         # Grow each plant
         for plant in game_state["plants"]:
@@ -180,14 +183,21 @@ def grow_plants():
                 # Update stage
                 if plant["growth"] < 20:
                     plant["stage"] = "seed"
+                    plant["is_animated"] = False
                 elif plant["growth"] < 40:
                     plant["stage"] = "sprout"
+                    plant["is_animated"] = False
                 elif plant["growth"] < 60:
                     plant["stage"] = "young"
+                    plant["is_animated"] = False
                 elif plant["growth"] < 80:
                     plant["stage"] = "mature"
+                    plant["is_animated"] = False
                 else:
                     plant["stage"] = "fully_grown"
+                    plant["is_animated"] = True
+                    # Set animation type based on plant type
+                    plant["animation_type"] = PLANT_DATA[plant["type"]]["animations"]["fully_grown"][0]
                 
                 # Add points for growth
                 game_state["points"] += 30
@@ -195,18 +205,8 @@ def grow_plants():
         # Update ecosystem
         update_ecosystem()
         
-        # Check for new animals
-        new_animals = [a for a in game_state["animals"] if a not in old_animals]
-        
-        # Get positions of mature plants for animal animations
-        mature_plants = []
-        for plant in game_state["plants"]:
-            if plant["stage"] in ["mature", "fully_grown"]:
-                mature_plants.append({
-                    "x": plant["x"],
-                    "y": plant["y"],
-                    "type": plant["type"]
-                })
+        # Check for new fully grown plants
+        new_fully_grown = [p for p in game_state["plants"] if p["stage"] == "fully_grown" and p.get("growth", 0) >= 100]
         
         # Add activity
         timestamp = datetime.now().strftime("[%H:%M:%S]")
@@ -218,13 +218,26 @@ def grow_plants():
             "status": "success",
             "message": "Plants grew successfully!",
             "plants": game_state["plants"],
-            "new_animals": new_animals,
-            "mature_plants": mature_plants,
+            "new_fully_grown": new_fully_grown,
             "game_state": game_state
         })
         
     except Exception as e:
         return jsonify({"status": "error", "message": str(e)})
+
+@app.route('/api/plant_animation/<int:x>/<int:y>', methods=['GET'])
+def get_plant_animation(x, y):
+    """Get specific plant animation data"""
+    for plant in game_state["plants"]:
+        if plant["x"] == x and plant["y"] == y:
+            if plant["stage"] == "fully_grown":
+                return jsonify({
+                    "is_animated": True,
+                    "animation_type": plant.get("animation_type", "sway"),
+                    "plant_type": plant["type"],
+                    "growth": plant["growth"]
+                })
+    return jsonify({"is_animated": False})
 
 @app.route('/api/reset', methods=['POST'])
 def reset_game():
@@ -249,8 +262,9 @@ def update_ecosystem():
     all_attracted_animals = set()
     
     for plant in game_state["plants"]:
-        attractions = PLANT_DATA[plant["type"]]["attractions"][plant["stage"]]
-        all_attracted_animals.update(attractions)
+        if plant["stage"] in PLANT_DATA[plant["type"]]["attractions"]:
+            attractions = PLANT_DATA[plant["type"]]["attractions"][plant["stage"]]
+            all_attracted_animals.update(attractions)
     
     game_state["animals"] = list(all_attracted_animals)
     game_state["total_animals"] = len(game_state["animals"])
@@ -268,12 +282,14 @@ def update_ecosystem():
     
     # Update score
     update_score()
+    
+    # Check achievements
+    check_achievements()
 
 def update_food_chains():
     game_state["food_chains"] = []
     mature_plants = [p for p in game_state["plants"] if p["stage"] in ["mature", "fully_grown"]]
     
-    # Simple food chains
     if any(p["type"] == "berry" for p in mature_plants) and "bird" in game_state["animals"]:
         game_state["food_chains"].append("🫐 Berry Bush → 🐦 Bird")
     if any(p["type"] == "rose" for p in mature_plants) and "butterfly" in game_state["animals"]:
@@ -293,31 +309,26 @@ def update_score():
     game_state["score"] = int(plant_score + animal_score + biodiversity_bonus + food_chain_bonus + fully_grown_bonus)
 
 def check_achievements():
-    achievements = []
-    
     if len(game_state["plants"]) >= 1 and "First Planter" not in game_state["achievements"]:
         game_state["achievements"].append("First Planter")
-        achievements.append("First Planter")
     
     if "butterfly" in game_state["animals"] and "Butterfly Friend" not in game_state["achievements"]:
         game_state["achievements"].append("Butterfly Friend")
-        achievements.append("Butterfly Friend")
     
     if game_state["biodiversity"] >= 50 and "Ecosystem Builder" not in game_state["achievements"]:
         game_state["achievements"].append("Ecosystem Builder")
-        achievements.append("Ecosystem Builder")
     
-    return achievements
+    if len([p for p in game_state["plants"] if p["stage"] == "fully_grown"]) >= 5 and "Master Gardener" not in game_state["achievements"]:
+        game_state["achievements"].append("Master Gardener")
 
 if __name__ == '__main__':
-    # Create templates folder
     if not os.path.exists('templates'):
         os.makedirs('templates')
     
     print("=" * 60)
-    print("🌿 EcoSim Server v2.0 - WITH ANIMATIONS!")
+    print("🌿 EcoSim v3.0 - WITH PLANT ANIMATIONS!")
     print("🌐 Server: http://localhost:5000")
-    print("🎬 Features: Tutorial Animations + Animal Animations")
+    print("🎬 Features: Living Plant Animations + Animal Animations")
     print("=" * 60)
     
     app.run(debug=True, port=5000)
